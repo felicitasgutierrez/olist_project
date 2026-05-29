@@ -32,34 +32,34 @@ DATA_INPUT_PATH = "/opt/airflow/data/input"
 
 # Archivos requeridos y sus columnas esperadas
 REQUIRED_FILES = {
-    "olist_orders_dataset.csv": [
+    "orders_dataset.csv": [
         "order_id", "customer_id", "order_status",
         "order_purchase_timestamp", "order_approved_at",
         "order_delivered_carrier_date", "order_delivered_customer_date",
         "order_estimated_delivery_date",
     ],
-    "olist_order_items_dataset.csv": [
+    "order_items_dataset.csv": [
         "order_id", "order_item_id", "product_id", "seller_id",
         "price", "freight_value",
     ],
-    "olist_customers_dataset.csv": [
+    "customers_dataset.csv": [
         "customer_id", "customer_unique_id",
         "customer_city", "customer_state",
     ],
-    "olist_products_dataset.csv": [
+    "products_dataset.csv": [
         "product_id", "product_category_name",
     ],
-    "olist_order_reviews_dataset.csv": [
+    "order_reviews_dataset.csv": [
         "review_id", "order_id", "review_score",
     ],
 }
 
 # Archivos opcionales (no rompen el pipeline si no existen)
 OPTIONAL_FILES = {
-    "olist_sellers_dataset.csv": [
+    "sellers_dataset.csv": [
         "seller_id", "seller_city", "seller_state",
     ],
-    "olist_order_payments_dataset.csv": [
+    "order_payments_dataset.csv": [
         "order_id", "payment_type", "payment_value",
     ],
     "product_category_name_translation.csv": [
@@ -219,11 +219,11 @@ def _clean_transform(**context) -> str:
     raw = ti.xcom_pull(task_ids="read_files")
 
     # ── Deserializar DataFrames ──
-    orders = pd.read_json(raw["olist_orders_dataset.csv"], orient="split")
-    items = pd.read_json(raw["olist_order_items_dataset.csv"], orient="split")
-    customers = pd.read_json(raw["olist_customers_dataset.csv"], orient="split")
-    products = pd.read_json(raw["olist_products_dataset.csv"], orient="split")
-    reviews = pd.read_json(raw["olist_order_reviews_dataset.csv"], orient="split")
+    orders = pd.read_json(raw["orders_dataset.csv"], orient="split")
+    items = pd.read_json(raw["order_items_dataset.csv"], orient="split")
+    customers = pd.read_json(raw["customers_dataset.csv"], orient="split")
+    products = pd.read_json(raw["products_dataset.csv"], orient="split")
+    reviews = pd.read_json(raw["order_reviews_dataset.csv"], orient="split")
 
     logger.info(f"Órdenes crudas: {len(orders):,}")
 
@@ -319,11 +319,13 @@ def _clean_transform(**context) -> str:
     staging = df.rename(columns={
         "order_delivered_customer_date": "order_delivered_date",
         "product_category_name": "categoria_producto",
-        "review_score_avg": "review_score",
-    })[
+        "review_score_avg": "review_score"
+    }).loc[
+        :,
         [
             "order_id",
             "customer_id",
+            "customer_unique_id",
             "order_status",
             "order_purchase_timestamp",
             "order_delivered_date",
@@ -360,7 +362,8 @@ def _load_to_dwh(**context) -> None:
     """
     ti = context["ti"]
     staging_json = ti.xcom_pull(task_ids="clean_transform")
-    staging = pd.read_json(staging_json, orient="split")
+    staging = pd.read_json(staging_json, orient="split")     
+    staging["entregado_a_tiempo"] = staging["entregado_a_tiempo"].map({1.0: True, 0.0: False, 1: True, 0: False}).where(staging["entregado_a_tiempo"].notna(), other=None)
 
     if staging.empty:
         logger.info("load_to_dwh: sin datos para cargar")
@@ -372,19 +375,20 @@ def _load_to_dwh(**context) -> None:
 
     upsert_sql = """
         INSERT INTO olist_orders_clean (
-            order_id, customer_id, order_status,
+            order_id, customer_id, customer_unique_id, order_status,
             order_purchase_date, order_delivered_date, order_estimated_delivery_date,
             entregado_a_tiempo, customer_state, customer_city,
             precio_total, flete_total, ratio_flete,
             review_score, categoria_producto
         ) VALUES (
-            %(order_id)s, %(customer_id)s, %(order_status)s,
+            %(order_id)s, %(customer_id)s, %(customer_unique_id)s, %(order_status)s,
             %(order_purchase_date)s, %(order_delivered_date)s, %(order_estimated_delivery_date)s,
             %(entregado_a_tiempo)s, %(customer_state)s, %(customer_city)s,
             %(precio_total)s, %(flete_total)s, %(ratio_flete)s,
             %(review_score)s, %(categoria_producto)s
         )
         ON CONFLICT (order_id) DO UPDATE SET
+            customer_unique_id              = EXCLUDED.customer_unique_id,
             order_status                    = EXCLUDED.order_status,
             order_delivered_date            = EXCLUDED.order_delivered_date,
             order_estimated_delivery_date   = EXCLUDED.order_estimated_delivery_date,
@@ -466,20 +470,20 @@ def _build_aggregations(**context) -> None:
         clientes_por_mes AS (
             SELECT
                 DATE_TRUNC('month', order_purchase_date)::DATE AS mes,
-                customer_id,
+                customer_unique_id,
                 MIN(order_purchase_date) AS primera_compra
             FROM olist_orders_clean
-            GROUP BY mes, customer_id
+            GROUP BY mes, customer_unique_id
         ),
         retencion AS (
             SELECT
                 c1.mes,
                 COUNT(DISTINCT CASE
-                    WHEN c2.customer_id IS NOT NULL THEN c1.customer_id
-                END) * 100.0 / NULLIF(COUNT(DISTINCT c1.customer_id), 0) AS tasa_retencion
+                    WHEN c2.customer_unique_id IS NOT NULL THEN c1.customer_unique_id
+                END) * 100.0 / NULLIF(COUNT(DISTINCT c1.customer_unique_id), 0) AS tasa_retencion
             FROM clientes_por_mes c1
             LEFT JOIN clientes_por_mes c2
-                ON c1.customer_id = c2.customer_id
+                ON c1.customer_unique_id = c2.customer_unique_id
                 AND c2.mes < c1.mes
             GROUP BY c1.mes
         ),

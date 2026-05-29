@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS olist_orders_clean (
     order_id                        VARCHAR PRIMARY KEY,
     customer_id                     VARCHAR NOT NULL,
+    customer_unique_id              VARCHAR,
     order_status                    VARCHAR,
     order_purchase_date             TIMESTAMP,
     order_delivered_date            TIMESTAMP,
