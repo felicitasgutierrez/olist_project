@@ -420,7 +420,39 @@ def _load_to_dwh(**context) -> None:
     logger.info(f"load_to_dwh OK: {rows_inserted:,} filas cargadas/actualizadas en olist_orders_clean")
 
 
-# ─── Tarea 6: build_aggregations ──────────────────────────────────────────────
+# ─── Tarea 6: update_rango_dataset ───────────────────────────────────────────
+
+def _update_rango_dataset(**context) -> None:
+    """
+    Calcula la fecha mínima y máxima de order_purchase_date en olist_orders_clean
+    y las guarda en la tabla rango_dataset. Se ejecuta después de load_to_dwh
+    para que la referencia del dashboard siempre refleje el dataset cargado.
+    """
+    dwh = PostgresHook(postgres_conn_id=POSTGRES_DWH_CONN)
+    conn = dwh.get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO rango_dataset (id, fecha_min, fecha_max)
+        SELECT
+            1,
+            MIN(order_purchase_date)::DATE,
+            MAX(order_purchase_date)::DATE
+        FROM olist_orders_clean
+        WHERE order_purchase_date IS NOT NULL
+          AND order_status NOT IN ('canceled', 'unavailable')
+        ON CONFLICT (id) DO UPDATE SET
+            fecha_min = EXCLUDED.fecha_min,
+            fecha_max = EXCLUDED.fecha_max
+    """)
+
+    conn.commit()
+    cur.close()
+    conn.close()
+    logger.info("update_rango_dataset OK: rango de fechas actualizado en el DWH")
+
+
+# ─── Tarea 7: build_aggregations ──────────────────────────────────────────────
 
 def _build_aggregations(**context) -> None:
     """
@@ -748,6 +780,12 @@ Colocar los CSVs de Olist Kaggle en `data/input/`:
         doc_md="Carga el staging limpio en PostgreSQL DWH con UPSERT",
     )
 
+    update_rango_dataset = PythonOperator(
+        task_id="update_rango_dataset",
+        python_callable=_update_rango_dataset,
+        doc_md="Calcula y guarda el rango de fechas disponible en el dataset",
+    )
+
     build_aggregations = PythonOperator(
         task_id="build_aggregations",
         python_callable=_build_aggregations,
@@ -761,4 +799,4 @@ Colocar los CSVs de Olist Kaggle en `data/input/`:
     )
 
     # ── Dependencias (flujo lineal) ──
-    discover_inputs >> validate_schema >> read_files >> clean_transform >> load_to_dwh >> build_aggregations >> quality_checks
+    discover_inputs >> validate_schema >> read_files >> clean_transform >> load_to_dwh >> update_rango_dataset >> build_aggregations >> quality_checks

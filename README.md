@@ -56,6 +56,7 @@ discover_inputs
   >> read_files
   >> clean_transform
   >> load_to_dwh
+  >> update_rango_dataset
   >> build_aggregations
   >> quality_checks
 ```
@@ -67,6 +68,7 @@ discover_inputs
 | `read_files` | Carga todos los CSVs con pandas y los pasa por XCom |
 | `clean_transform` | Parsea fechas, descarta filas con datos críticos vacíos, calcula `entregado_a_tiempo` y `ratio_flete`, une todos los CSVs en un DataFrame de staging |
 | `load_to_dwh` | Inserta el staging en `olist_orders_clean` con UPSERT por `order_id` |
+| `update_rango_dataset` | Calcula el mínimo y máximo de `order_purchase_date` (excluyendo canceladas) y los guarda en `rango_dataset` para el dashboard |
 | `build_aggregations` | Calcula las tres tablas agregadas para el dashboard directamente en SQL |
 | `quality_checks` | Verifica precios no negativos, porcentajes en rango [0,100], reviews en [1,5], y que el staging no esté vacío |
 
@@ -173,6 +175,15 @@ Una fila por orden. Es la fuente de todas las agregaciones.
 | `cantidad_ordenes` | Órdenes del estado |
 | `pct_entregas_a_tiempo` | % entregas a tiempo en el estado |
 | `score_promedio_reviews` | Score promedio del estado |
+
+### `rango_dataset` — rango de fechas disponible
+
+Una sola fila que se actualiza en cada ejecución del DAG con la fecha mínima y máxima del dataset cargado (excluyendo órdenes canceladas). Se usa en el dashboard como referencia dinámica para los filtros de fecha.
+
+| Columna | Descripción |
+|---------|-------------|
+| `fecha_min` | Fecha de compra más antigua del dataset |
+| `fecha_max` | Fecha de compra más reciente del dataset |
 
 ### `estados_traduccion` y `categorias_traduccion` — tablas de referencia para el dashboard
 

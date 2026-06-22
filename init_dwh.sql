@@ -26,6 +26,13 @@ CREATE TABLE IF NOT EXISTS olist_orders_clean (
 -- Tablas agregadas para el dashboard
 -- ============================================================
 
+-- Rango de fechas disponible en el dataset (se actualiza en cada ejecución del DAG)
+CREATE TABLE IF NOT EXISTS rango_dataset (
+    id          INTEGER PRIMARY KEY DEFAULT 1,
+    fecha_min   DATE NOT NULL,
+    fecha_max   DATE NOT NULL
+);
+
 -- KPIs generales por mes
 CREATE TABLE IF NOT EXISTS kpis_por_mes (
     mes                         DATE PRIMARY KEY,
